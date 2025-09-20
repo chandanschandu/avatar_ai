@@ -1,10 +1,10 @@
 const express = require('express');
 const fetch = require('node-fetch');
-const app = express();
-const port = 3000;
 
 const azureTTSKey = "4bf263d4b43b4b648faa6d29ad009906";
-const azureRegion = "eastus";
+const azureRegion = "eastus"
+
+
 
 const portfolioData = {
     "name": "Chandan S",
@@ -133,18 +133,23 @@ const portfolioData = {
     ]
   };
 
+const app = express();
 app.use(express.json());
-app.use(express.static('.')); // Serve static files from the current directory
 
+// Serve static files if needed
+app.use(express.static('.'));
+
+// TTS token endpoint
 app.get('/api/tts-token', (req, res) => {
   res.json({ key: azureTTSKey, region: azureRegion });
 });
 
-app.post('/v1/chat', async (req, res) => {
+// Chat endpoint
+app.post('/api/v1/chat', async (req, res) => {
   try {
-    const systemPrompt = `You are an AI assistant for a digital avatar of Chandan S. Your ONLY purpose is to answer questions about Chandan S based on the JSON data provided below. You must adhere to the following rules strictly: 1. Answer ONLY from the provided JSON data. Do not use any external knowledge. 2. If the user's question cannot be answered using the data, politely state that you do not have that information. 3. For simple greetings like 'hi' or 'hello', respond with a brief, friendly greeting and gently guide the conversation back to your purpose (e.g., 'Hello! How can I help you with questions about Chandan S?'). 4. Your responses MUST be plain text only. It is forbidden to use any markdown formatting. Do NOT use characters like '*', '#', or '-'. For example, never write "**Driven Video Summarization**". Instead, write "Driven Video Summarization". Here is the data: \n\n${JSON.stringify(portfolioData)}`;
+    const systemPrompt = `You are an AI assistant for a digital avatar of Chandan S. Your ONLY purpose is to answer questions about Chandan S based on the JSON data provided below. You must adhere to the following rules strictly: 1. Answer ONLY from the provided JSON data. Do not use any external knowledge. 2. If the user's question cannot be answered using the data, politely state that you do not have that information. 3. For simple greetings like 'hi' or 'hello', respond with a brief, friendly greeting and gently guide the conversation back to your purpose. 4. Your responses MUST be plain text only. It is forbidden to use any markdown formatting or special characters like '*', '#', or '-'. Here is the data:\n\n${JSON.stringify(portfolioData)}`;
 
-    const perplexityResponse = await fetch("https://api.perplexity.ai/chat/completions", {
+    const response = await fetch("https://api.perplexity.ai/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -159,22 +164,18 @@ app.post('/v1/chat', async (req, res) => {
       })
     });
 
-    if (!perplexityResponse.ok) {
-        const errorText = await perplexityResponse.text();
-        console.error(`Perplexity API error: ${perplexityResponse.status} ${perplexityResponse.statusText}`, errorText);
-        res.status(perplexityResponse.status).send(errorText);
-        return;
+    if (!response.ok) {
+      const errorText = await response.text();
+      return res.status(response.status).send(errorText);
     }
 
-    const data = await perplexityResponse.json();
+    const data = await response.json();
     res.json(data);
   } catch (error) {
-    console.error('Error proxying request:', error);
-    res.status(500).json({ error: 'Failed to proxy request' });
+    console.error("Error proxying request:", error);
+    res.status(500).json({ error: "Failed to proxy request" });
   }
 });
 
-app.listen(port, () => {
-  console.log(`Proxy server listening at http://localhost:${port}`);
-  console.log(`Open http://localhost:${port}/test.html in your browser.`);
-});
+// Export the Express app for Vercel
+module.exports = app;
