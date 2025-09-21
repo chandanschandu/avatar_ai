@@ -23,230 +23,107 @@
     #stop-button { background:#ff6b6b; color:#121212; display:none; } #stop-button:hover { background:#e05252; }
     #mic-button { background:#6c757d; color:#fff; } #mic-button.listening { background:#dc3545; }
     #loading { position:absolute; bottom:10px; left:10px; font-size:16px; background:rgba(0,0,0,0.5); padding:5px; border-radius:3px; }
+    @media (max-width:768px){#main-container{flex-direction:column;}#avatar-container{flex:0 0 45%;min-height:0;min-width:100%;}#chat-container{max-width:100%;border-left:none;border-top:1px solid #333;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}#header h1{font-size:1.5em;}#chat-input{padding:8px 12px;font-size:0.9em;}#send-button,#stop-button,#mic-button{width:35px;height:35px;font-size:1em;}}
   </style>
 
   <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js/+esm",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
-        "talkinghead": "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.5/modules/talkinghead.mjs"
-      }
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js/+esm",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+      "talkinghead": "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.5/modules/talkinghead.mjs"
     }
+  }
   </script>
-
   <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@latest/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
 
   <script type="module">
     import { TalkingHead } from "talkinghead";
 
-    const visemeMap = ["sil","aa","aa","O","E","RR","I","U","O","O","O","I","kk","RR","nn","SS","CH","TH","FF","DD","kk","PP"];
-    let head, microsoftSynthesizer = null;
-    let visemesbuffer = { visemes:[], vtimes:[], vdurations:[] };
-    let prevViseme = null;
-    let currentBotMessageElem = null;
-    let speechStartTime = 0;
-    let synthesisInProgress = false;
-    let recognition, isListening = false;
-    let wordSchedule = [], scheduledTimers = [];
-    const playbackLatencyMs = 2000; // tune for word sync
+    const visemeMap=["sil","aa","aa","O","E","RR","I","U","O","O","O","I","kk","RR","nn","SS","CH","TH","FF","DD","kk","PP"];
+    let head,microsoftSynthesizer=null,visemesbuffer={},prevViseme=null,currentBotMessageElem=null,speechStartTime=0,synthesisInProgress=false,recognition,isListening=false,abortController=new AbortController();
+    let wordSchedule=[],scheduledTimers=[],playbackLatencyMs=400;
 
-    function resetLipsyncBuffers() {
-      visemesbuffer = { visemes:[], vtimes:[], vdurations:[] };
-      prevViseme = null;
-    }
-    function clearScheduledTimers() {
-      for (const t of scheduledTimers) clearTimeout(t);
-      scheduledTimers = [];
-    }
-    function scheduleWord(idx, chatMessages) {
-      const w = wordSchedule[idx];
-      if (!w || w.scheduled) return;
-      w.scheduled = true;
-      const displayAt = speechStartTime + w.time + playbackLatencyMs;
-      const delay = Math.max(0, displayAt - performance.now());
-      const tid = setTimeout(() => {
-        if (!synthesisInProgress || !currentBotMessageElem) return;
-        currentBotMessageElem.textContent += (currentBotMessageElem.textContent ? " " : "") + w.text;
-        if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
-      }, delay);
-      scheduledTimers.push(tid);
-    }
-    function schedulePendingWords(chatMessages) {
-      for (let i=0; i<wordSchedule.length; i++) {
-        if (!wordSchedule[i].scheduled) scheduleWord(i, chatMessages);
-      }
-    }
+    function resetLipsyncBuffers(){visemesbuffer={visemes:[],vtimes:[],vdurations:[]};prevViseme=null;}
+    function clearScheduledTimers(){for(const t of scheduledTimers) clearTimeout(t);scheduledTimers=[];}
+    function scheduleWord(idx,chatMessages){const w=wordSchedule[idx];if(!w||w.scheduled)return;w.scheduled=true;const displayAt=speechStartTime+w.time+playbackLatencyMs;const delay=Math.max(0,displayAt-performance.now());const tid=setTimeout(()=>{if(!synthesisInProgress||!currentBotMessageElem)return;currentBotMessageElem.textContent+=(currentBotMessageElem.textContent?" ":"")+w.text;if(chatMessages) chatMessages.scrollTop=chatMessages.scrollHeight;},delay);scheduledTimers.push(tid);}
+    function schedulePendingWords(chatMessages){for(let i=0;i<wordSchedule.length;i++){if(!wordSchedule[i].scheduled)scheduleWord(i,chatMessages);}}
 
-    document.addEventListener('DOMContentLoaded', async () => {
-      const nodeAvatar=document.getElementById('avatar');
-      const nodeLoading=document.getElementById('loading');
-      const chatMessages=document.getElementById('chat-messages');
-      const chatInput=document.getElementById('chat-input');
-      const sendButton=document.getElementById('send-button');
-      const stopButton=document.getElementById('stop-button');
-      const micButton=document.getElementById('mic-button');
+    document.addEventListener('DOMContentLoaded',async()=>{
+      const nodeAvatar=document.getElementById('avatar'),nodeLoading=document.getElementById('loading'),chatMessages=document.getElementById('chat-messages'),chatInput=document.getElementById('chat-input'),sendButton=document.getElementById('send-button'),stopButton=document.getElementById('stop-button'),micButton=document.getElementById('mic-button');
+      
+      const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+      if(SpeechRecognition){recognition=new SpeechRecognition();recognition.continuous=false;recognition.lang='en-US';recognition.interimResults=false;
+        recognition.onresult=event=>{chatInput.value=event.results[event.results.length-1][0].transcript.trim();handleUserMessage();};
+        recognition.onerror=event=>{console.error('Speech recognition error:',event.error);if(isListening) stopListening();};
+        recognition.onend=()=>{micButton.classList.remove('listening');micButton.textContent='🎤';};
+        micButton.addEventListener('click',()=>{if(isListening) stopListening();else startListening();});
+      }else micButton.style.display='none';
+
+      function startListening(){if(SpeechRecognition&&!synthesisInProgress&&!isListening){isListening=true;micButton.classList.add('listening');micButton.textContent='...';try{recognition.start();}catch(e){console.error(e);stopListening();}}}
+      function stopListening(){if(SpeechRecognition){isListening=false;micButton.classList.remove('listening');micButton.textContent='🎤';try{recognition.stop();}catch(e){}}}
 
       nodeLoading.textContent="Loading Avatar...";
-      head=new TalkingHead(nodeAvatar,{ttsEndpoint:"/api/gtts/", cameraView:"upper", lipsyncLang:"en"});
+      head=new TalkingHead(nodeAvatar,{ttsEndpoint:"/gtts/",cameraView:"upper",lipsyncLang:"en"});
 
-      try {
-        await head.showAvatar({
-          url:"https://models.readyplayer.me/68c22c1a8ac0d37a66b6df1c.glb?morphTargets=ARKit,Oculus+Visemes,mouthOpen,mouthSmile,eyesClosed,eyesLookUp,eyesLookDown&textureSizeLimit=1024&textureFormat=png",
-          body:"M"
-        }, ev => {
-          if(ev.lengthComputable) nodeLoading.textContent=`Loading ${Math.round((ev.loaded/ev.total)*100)}%`;
-        });
+      try{
+        await head.showAvatar({url:"https://models.readyplayer.me/68c22c1a8ac0d37a66b6df1c.glb?morphTargets=ARKit,Oculus+Visemes,mouthOpen,mouthSmile,eyesClosed,eyesLookUp,eyesLookDown&textureSizeLimit=1024&textureFormat=png",body:"M"},
+          ev=>{if(ev.lengthComputable)nodeLoading.textContent=`Loading ${Math.round((ev.loaded/ev.total)*100)}%`;}
+        );
         nodeLoading.style.display="none";
         await initializeAzureTTS();
         startConversation();
-      } catch(err) {
-        console.error("Error loading avatar:",err);
-        nodeLoading.textContent="Failed to load avatar.";
-      }
+      }catch(err){console.error(err);nodeLoading.textContent="Failed to load avatar.";}
 
-      // ✅ initializeAzureTTS
-      async function initializeAzureTTS() {
-        if (microsoftSynthesizer) return;
-        try {
-          const response = await fetch('/api/tts-token');
-          const token = await response.json();
-          const config = window.SpeechSDK.SpeechConfig.fromSubscription(token.key, token.region);
-          config.speechSynthesisVoiceName = "en-US-GuyNeural"; // male voice
-          config.speechSynthesisOutputFormat = window.SpeechSDK.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3;
-          const audioConfig = window.SpeechSDK.AudioConfig.fromDefaultSpeakerOutput();
-          microsoftSynthesizer = new window.SpeechSDK.SpeechSynthesizer(config, audioConfig);
-
-          microsoftSynthesizer.synthesizing = (s, e) => {
-            if (speechStartTime === 0) speechStartTime = performance.now();
-            if (!head.isStreaming) {
-              head.streamStart({
-                sampleRate: 48000, lipsyncType: 'visemes', lipsyncLang: 'en',
-                waitForAudioChunks: true, mood: 'happy', gain: 0.5,
-              });
-            }
-            if (e.result && e.result.audioData) {
-              head.streamAudio({
-                audio: e.result.audioData,
-                visemes: visemesbuffer.visemes.splice(0),
-                vtimes: visemesbuffer.vtimes.splice(0),
-                vdurations: visemesbuffer.vdurations.splice(0),
-              });
-            }
+      async function initializeAzureTTS(){
+        if(microsoftSynthesizer) return;
+        try{
+          const response=await fetch('/api/tts-token'); const token=await response.json();
+          const config=window.SpeechSDK.SpeechConfig.fromSubscription(token.key,token.region);
+          config.speechSynthesisVoiceName="en-US-GuyNeural";
+          config.speechSynthesisOutputFormat=window.SpeechSDK.SpeechSynthesisOutputFormat.Raw48Khz16BitMonoPcm;
+          microsoftSynthesizer=new window.SpeechSDK.SpeechSynthesizer(config,null);
+          microsoftSynthesizer.synthesizing=(s,e)=>{
+            if(speechStartTime===0)speechStartTime=performance.now();
+            head.streamAudio({audio:e.result.audioData,visemes:visemesbuffer.visemes.splice(0),vtimes:visemesbuffer.vtimes.splice(0),vdurations:visemesbuffer.vdurations.splice(0)});
             schedulePendingWords(chatMessages);
           };
-
-          microsoftSynthesizer.visemeReceived = (s, e) => {
-            const vtime = e.audioOffset / 10000;
-            const viseme = visemeMap[e.visemeId];
-            if (!head.isStreaming) return;
-            if (prevViseme) {
-              let vduration = vtime - prevViseme.vtime;
-              if (vduration < 40) vduration = 40;
-              visemesbuffer.visemes.push(prevViseme.viseme);
-              visemesbuffer.vtimes.push(prevViseme.vtime);
-              visemesbuffer.vdurations.push(vduration);
-            }
-            prevViseme = { viseme, vtime };
+          microsoftSynthesizer.visemeReceived=(s,e)=>{
+            const vtime=e.audioOffset/10000;const viseme=visemeMap[e.visemeId];if(!head.isStreaming)return;if(prevViseme){let vduration=vtime-prevViseme.vtime;if(vduration<40)vduration=40;visemesbuffer.visemes.push(prevViseme.viseme);visemesbuffer.vtimes.push(prevViseme.vtime);visemesbuffer.vdurations.push(vduration);}prevViseme={viseme,vtime};};
+          microsoftSynthesizer.wordBoundary=(s,e)=>{
+            if(!synthesisInProgress)return;const timeMs=e.audioOffset/10000;const idx=wordSchedule.length;wordSchedule.push({text:e.text,time:timeMs,scheduled:false});if(speechStartTime!==0)scheduleWord(idx,chatMessages);
           };
-
-          microsoftSynthesizer.wordBoundary = (s, e) => {
-            if (!synthesisInProgress) return;
-            const timeMs = e.audioOffset / 10000;
-            const idx = wordSchedule.length;
-            wordSchedule.push({ text: e.text, time: timeMs, scheduled: false });
-            if (speechStartTime !== 0) scheduleWord(idx, chatMessages);
-          };
-        } catch (err) {
-          console.error('initializeAzureTTS error:', err);
-        }
+        }catch(err){console.error(err);}
       }
 
-      // ✅ azureSpeak
-      function azureSpeak(text, botMessageElem) {
-        clearScheduledTimers();
-        wordSchedule = [];
-        speechStartTime = 0;
-        currentBotMessageElem = botMessageElem;
-        synthesisInProgress = true;
+      function textToSSML(text){return `<speak version="1.0" xml:lang="en-US"><voice name="en-US-GuyNeural">${text}</voice></speak>`;}
 
-        if (!microsoftSynthesizer) {
-          initializeAzureTTS().catch(console.error);
-          return;
-        }
-
-        const ssml = `
-          <speak version="1.0" xml:lang="en-US">
-            <voice name="en-US-GuyNeural">${text}</voice>
-          </speak>
-        `;
-
-        try {
-          microsoftSynthesizer.speakSsmlAsync(
-            ssml,
-            result => {
-              if (prevViseme) {
-                visemesbuffer.visemes.push(prevViseme.viseme);
-                visemesbuffer.vtimes.push(prevViseme.vtime);
-                visemesbuffer.vdurations.push(200);
-                prevViseme = null;
-                head.streamAudio({
-                  audio: null, // no dummy audio
-                  visemes: visemesbuffer.visemes.splice(0),
-                  vtimes: visemesbuffer.vtimes.splice(0),
-                  vdurations: visemesbuffer.vdurations.splice(0),
-                });
-              }
-              if (currentBotMessageElem) {
-                currentBotMessageElem.textContent =
-                  wordSchedule.map(w => w.text).join(' ') ||
-                  currentBotMessageElem.textContent;
-              }
-              clearScheduledTimers();
-              wordSchedule = [];
-              currentBotMessageElem = null;
-              synthesisInProgress = false;
-            },
-            err => {
-              console.error('Azure TTS error:', err);
-              synthesisInProgress = false;
-            }
-          );
-        } catch (err) {
-          console.error('speakSsmlAsync exception:', err);
-          synthesisInProgress = false;
-        }
+      function azureSpeak(ssml,botMessageElem){
+        clearScheduledTimers();wordSchedule=[];speechStartTime=0;currentBotMessageElem=botMessageElem;synthesisInProgress=true;
+        if(!microsoftSynthesizer) initializeAzureTTS().catch(console.error);
+        try{microsoftSynthesizer.speakSsmlAsync(ssml,()=>{if(currentBotMessageElem)currentBotMessageElem.textContent=wordSchedule.map(w=>w.text).join(' ')||currentBotMessageElem.textContent;clearScheduledTimers();wordSchedule=[];currentBotMessageElem=null;synthesisInProgress=false;},err=>{console.error(err);});}catch(err){console.error(err);}
       }
 
-      // ✅ UI helpers
-      function addMessage(text,sender){
-        const el=document.createElement('div');
-        el.classList.add('message',sender);
-        el.textContent=text;
-        chatMessages.appendChild(el);
-        chatMessages.scrollTop=chatMessages.scrollHeight;
-        return el;
-      }
-      function startConversation(){
-        const firstBot = addMessage("Hello! I'm an AI avatar representing Chandan S. You can ask me about his skills, experience, projects, or anything else you'd like to know.",'bot');
-        azureSpeak(firstBot.textContent, firstBot);
+      function addMessage(text,sender){const el=document.createElement('div');el.classList.add('message',sender);el.textContent=text;chatMessages.appendChild(el);chatMessages.scrollTop=chatMessages.scrollHeight;return el;}
+
+      async function handleUserMessage(){
+        const text=chatInput.value.trim();if(text&&!synthesisInProgress){addMessage(text,'user');chatInput.value='';const botEl=addMessage('','bot');const ssml=textToSSML(await getBotResponse(text));if(!head.isStreaming)head.streamStart({sampleRate:48000,mood:'happy',gain:0.5,lipsyncType:'visemes',lipsyncLang:'en',waitForAudioChunks:true});azureSpeak(ssml,botEl);}
       }
 
-      // ✅ Send message events
-      sendButton.addEventListener('click', () => {
-        if (!chatInput.value.trim()) return;
-        const userMsg = addMessage(chatInput.value,'user');
-        chatInput.value = '';
-        const botMsg = addMessage("Thinking...",'bot');
-        // Demo: echo back
-        setTimeout(() => {
-          botMsg.textContent = "You said: " + userMsg.textContent;
-          azureSpeak(botMsg.textContent, botMsg);
-        }, 800);
-      });
-      chatInput.addEventListener('keypress', e => {
-        if (e.key === 'Enter') sendButton.click();
-      });
+      async function getBotResponse(userInput){
+        abortController=new AbortController();
+        try{
+          const res=await fetch("/api/v1/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:userInput}),signal:abortController.signal});
+          const data=await res.json();
+          if(data&&data.choices&&data.choices[0]&&data.choices[0].message)return data.choices[0].message.content.replace(/[*_#-]/g,'');
+          return "Sorry, I couldn’t generate a response.";
+        }catch(err){if(err.name==="AbortError")return"Generation stopped.";console.error(err);return"Oops! Something went wrong.";}
+      }
+
+      sendButton.addEventListener('click',handleUserMessage);
+      chatInput.addEventListener('keypress',e=>{if(e.key==='Enter')handleUserMessage();});
+
+      function startConversation(){addMessage("Hello! I'm an AI avatar representing Chandan S. You can ask me about his skills, experience, projects, or anything else you'd like to know.",'bot');}
     });
   </script>
 </head>
@@ -258,9 +135,9 @@
       <div id="chat-messages"></div>
       <div id="chat-input-container">
         <input type="text" id="chat-input" placeholder="Type or press 🎤 to talk...">
-        <button id="send-button" title="Send">&#9658;</button>
-        <button id="mic-button" title="Activate Voice">🎤</button>
-        <button id="stop-button" title="Stop Speaking">&#9632;</button>
+        <button id="send-button">&#9658;</button>
+        <button id="mic-button">🎤</button>
+        <button id="stop-button">&#9632;</button>
       </div>
     </div>
   </div>
