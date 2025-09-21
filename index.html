@@ -101,8 +101,11 @@
           const response=await fetch('/api/tts-token');
           const token=await response.json();
           const config=window.SpeechSDK.SpeechConfig.fromSubscription(token.key,token.region);
-          config.speechSynthesisOutputFormat=window.SpeechSDK.SpeechSynthesisOutputFormat.Raw48Khz16BitMonoPcm;
-          microsoftSynthesizer=new window.SpeechSDK.SpeechSynthesizer(config,null);
+          config.speechSynthesisOutputFormat = window.SpeechSDK.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3;
+
+          const audioConfig = window.SpeechSDK.AudioConfig.fromDefaultSpeakerOutput();
+          microsoftSynthesizer = new window.SpeechSDK.SpeechSynthesizer(config, audioConfig);
+
           microsoftSynthesizer.synthesizing=(s,e)=>{ if(speechStartTime===0)speechStartTime=performance.now(); head.streamAudio({ audio:e.result.audioData, visemes:visemesbuffer.visemes.splice(0), vtimes:visemesbuffer.vtimes.splice(0), vdurations:visemesbuffer.vdurations.splice(0) }); schedulePendingWords(chatMessages); };
           microsoftSynthesizer.visemeReceived=(s,e)=>{ const vtime=e.audioOffset/10000; const viseme=visemeMap[e.visemeId]; if(!head.isStreaming) return; if(prevViseme){ let vduration=vtime-prevViseme.vtime; if(vduration<40) vduration=40; visemesbuffer.visemes.push(prevViseme.viseme); visemesbuffer.vtimes.push(prevViseme.vtime); visemesbuffer.vdurations.push(vduration); } prevViseme={viseme,vtime}; };
           microsoftSynthesizer.wordBoundary=(s,e)=>{ if(!synthesisInProgress) return; const timeMs=e.audioOffset/10000; const idx=wordSchedule.length; wordSchedule.push({text:e.text,time:timeMs,scheduled:false}); if(speechStartTime!==0) scheduleWord(idx,chatMessages); };
